@@ -1,0 +1,319 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include<stdbool.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <fcntl.h>
+#include <errno.h>
+
+#define BACKLOG 5
+#define PORT "8000"
+
+void displayIPsGivenHost(char *IP, char *PORT, struct addrinfo *res){
+    void *addr;
+    struct addrinfo *ptr; 
+    char *ipver;  
+    int status;
+    char * ipstr;
+    for(ptr = res; ptr!= NULL; ptr = ptr->ai_next){
+        if(ptr->ai_family == AF_INET){ // IPV4
+            struct sockaddr_in *ipv4 = (struct sockaddr_in *)ptr->ai_addr;
+            addr = &(ipv4->sin_addr);
+            ipver = "IPV4";
+        }
+
+        else{// IPV6
+            struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)ptr->ai_addr;
+            addr = &(ipv6->sin6_addr);
+            ipver = "IPV4";
+        }
+        inet_ntop(ptr->ai_family, addr, ipstr, INET6_ADDRSTRLEN);
+        printf(" %s: %s\n", ipver, ipstr);
+    }
+
+    freeaddrinfo(res);
+}
+
+
+void displaySurroundingIPs(char *PORT, struct addrinfo *res){
+}
+
+
+
+
+#include "includes.h"
+#include "./Client/client.h"
+
+
+#include <stdio.h>
+#include <ifaddrs.h>
+#include <stdlib.h>
+#include<stdbool.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <util.h>
+
+#define BACKLOG 5
+#define PORT "8000"
+#define BUFFER_SIZE 10000
+
+int main(int argc, char *argv[]){
+    setvbuf(stdout, NULL, _IONBF, 0);
+    bool serverMode = false;
+    char *ipServer;
+    int opt;
+    int fd, status;
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    while((opt = getopt(argc, argv, "sc:")) != -1){
+        switch(opt){
+            case 's':
+                serverMode = true;
+                hints.ai_flags = AI_PASSIVE;
+                status = getaddrinfo(NULL, PORT, &hints, &res);
+                if(status != 0){
+                    fprintf(stderr, "getaddrinfoError: %s\n", gai_strerror(status));
+                    return 1;
+                }
+                break;
+            case 'c':
+                ipServer = optarg;
+                hints.ai_flags = AI_ADDRCONFIG;
+                status = getaddrinfo(ipServer, PORT, &hints, &res);
+                if(status != 0){
+                    fprintf(stderr, "getaddrinfoError: %s\n", gai_strerror(status));
+                    return 1;
+                }
+        }
+    }
+    fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if(fd < 0){
+        perror("socketError");
+        return 1;
+    }
+
+    if(serverMode){
+        if(bind(fd, res->ai_addr, res->ai_addrlen) < 0){
+            perror("bindError");
+            return 1;
+        }
+    
+        if(listen(fd, BACKLOG) < 0){
+            perror("listenError");
+            return 1;
+        }
+    
+        struct sockaddr_in temp, *temp2;
+        struct ifaddrs *ipAddress, *next;
+        char netstring[INET_ADDRSTRLEN], ipstring[INET_ADDRSTRLEN], port[10];
+        socklen_t temp_len = sizeof(temp);
+    
+        if(getifaddrs(&ipAddress) < 0){
+            perror("getifaddrsError");
+            return 1;
+        }   
+        for(next = ipAddress; next!=NULL; next = next->ifa_next){
+            if(next->ifa_addr == NULL){
+                continue;
+            }
+            if(next->ifa_addr->sa_family == AF_INET){
+                temp2 = (struct sockaddr_in *)next->ifa_addr;
+                inet_ntop(next->ifa_addr->sa_family, &(temp2->sin_addr), ipstring, temp_len);
+    
+                if(strcmp("127.0.0.1", ipstring) != 0){
+                    break;
+                }
+            }
+        }
+    
+        if(getsockname(fd, (struct sockaddr *)&temp, &temp_len) < 0){
+            perror("getsocknameError");
+            return 1;
+        }
+        inet_ntop(res->ai_family, &temp.sin_addr, netstring, temp_len);
+        int port_int = ntohs(temp.sin_port);
+        snprintf(port, sizeof(port), "%d", port_int);
+        printf("Listening -> NET: %s | PORT: %s | IP: %s\n", netstring, port, ipstring);
+    
+        int flags;
+        if ((flags = fcntl(fd, F_GETFL, 0)) == -1) {
+            perror("fcntl F_GETFL");
+            return -1;
+        }
+    
+        flags |= O_NONBLOCK;
+        if (fcntl(fd, F_SETFL, flags) == -1) {
+            perror("fcntl F_SETFL");
+            return -1;
+        }
+        freeaddrinfo(res);
+        char *welcome_msg = "Welcome to the chat!\n";
+        int new_fd, count = 0;
+        int byte_count = 0;
+       // ssize_t byte_count = 0;
+        struct sockaddr_storage client_addr;
+        int clients[100];
+        //memset(clients, 0, sizeof(clients));
+        char buffer[BUFFER_SIZE];
+        size_t msg_len;
+        socklen_t client_addrlen = sizeof(client_addr);
+    
+        while(true){
+            new_fd = accept(fd, (struct sockaddr *)&client_addr, &client_addrlen);
+            while(true){
+                if(new_fd < 0){
+                    switch(errno){
+                        case EAGAIN:
+                            break;
+                        case EBADF:
+                            perror("EBADF");
+                            return 1;
+                        case ECONNABORTED:
+                            perror("ECONNABORTED");
+                            continue;
+                        case EFAULT:
+                            perror("EFAULT");
+                            return 1;
+                    }
+                    
+                    for(int i=0; i<count; i++){
+                        byte_count = recv(clients[i], buffer, BUFFER_SIZE, 0);
+                        if(byte_count < 0){
+                            if(errno == EAGAIN || errno == EWOULDBLOCK){
+                                continue;
+                            }
+                            else{
+                                perror("recvError");
+                                return 1;
+                            }
+                        }
+                        if(byte_count > 0){
+                            printf("Resending: %s\n", buffer);
+                            printf("FD_receive: %d\n", clients[i]);
+                            for(int j=0; j<count; j++){
+                                if(j != i){
+                                    printf("FD_send: %d\n", clients[j]);
+                                    ssize_t total_sent = 0;
+                                    while (total_sent < byte_count) {
+                                        ssize_t sent = send(clients[j], buffer, byte_count - sent, 0);
+                                        if (sent < 0) {
+                                            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                                // Socket is nonblocking and not ready; try again later.
+                                                continue;
+                                            }
+                                            // For other errors, return -1.
+                                            return -1;
+                                        }
+                                        total_sent += sent;
+                                    }
+                                }
+                            }
+    
+                        }   
+                    }
+                }
+                else{
+                    clients[count++] = new_fd;
+                    send(new_fd, welcome_msg, strlen(welcome_msg), 0);
+                }
+                break;
+            }
+        }
+    }
+    else{
+
+        if(connect(fd, res->ai_addr, res->ai_addrlen) < 0){
+            perror("connectError");
+            return 1;
+        }
+        char msgBuffer[1000];
+        size_t bytes = 0;
+
+        while(recv(fd, msgBuffer, sizeof(msgBuffer), MSG_DONTWAIT) < 0){
+            if(errno == EAGAIN || errno == EWOULDBLOCK){
+                continue;
+            }
+            else{
+                perror("recvError");
+            return 1;
+            }
+        }
+        printf("%s", msgBuffer);
+        fflush(stdout);
+        memset(msgBuffer, 0, sizeof(msgBuffer));
+        fd_set readfds;
+        int maxfd = (fd > STDIN_FILENO ? fd : STDIN_FILENO) + 1;
+        
+        while(true){
+            FD_ZERO(&readfds);
+            FD_SET(fd, &readfds);
+            FD_SET(STDIN_FILENO, &readfds);
+
+            if(select(maxfd, &readfds, NULL, NULL, NULL) < 0){
+                perror("selectError");
+                return 1;
+            }
+
+            if(FD_ISSET(fd, &readfds)){
+                bytes = recv(fd, msgBuffer, sizeof(msgBuffer), MSG_DONTWAIT);
+                if(bytes > 0){
+                    fflush(stdout);
+                }
+                memset(msgBuffer, 0, sizeof(msgBuffer));
+            }
+            if(FD_ISSET(STDIN_FILENO, &readfds)){
+                fgets(msgBuffer, sizeof(msgBuffer), stdin);
+                if(strlen(msgBuffer) > 0){
+                    int bytes_sent = 0;
+                    int total_sent = 0;
+                    while(total_sent < strlen(msgBuffer)){
+                        bytes_sent = send(fd, msgBuffer, strlen(msgBuffer), MSG_DONTWAIT);
+                        //printf("Bytes sent: %d | len: %d\n", bytes_sent, (int)strlen(msgBuffer));
+                        if(bytes_sent < 0){
+                            perror("sendError");
+                        }
+                        total_sent += bytes_sent;
+                    }
+                }
+            }
+
+        }
+
+    }
+    return 0;
+}
+
+
+/*
+
+
+EAGAIN or EWOULDBLOCK: The socket is marked non-blocking and no connections are present to be accepted.
+EBADF: The file descriptor provided is not a valid socket.
+ECONNABORTED: A connection has been aborted (for example, by the peer) before it could be accepted.
+EFAULT: The address or address length pointer provided points outside the process's accessible address space.
+EINTR: The accept() call was interrupted by a signal before a connection was established.
+EINVAL: The socket is not listening for connections, or the address length is invalid.
+EMFILE: The per-process limit on the number of open file descriptors has been reached.
+ENFILE: The system-wide limit on the total number of open file descriptors has been reached.
+ENOBUFS or ENOMEM: Insufficient memory was available to complete the operation.
+ENOTSOCK: The file descriptor does not refer to a socket.
+EOPNOTSUPP: The socket does not support the operation (rare, and specific to certain socket types).
+
+*/
+
