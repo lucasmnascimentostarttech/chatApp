@@ -24,9 +24,11 @@ extern int totalClients;
 
 typedef struct Clients Clients;
 struct Clients{
+    bool free;
     int client_fd;
     char *client_msg;
     Clients *next;
+    Clients *previous;
 };
 
 typedef struct{
