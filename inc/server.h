@@ -13,5 +13,6 @@ int setFlags(int *fd);
 int incomingClients(int *serverfd, ClientsArray *clients);
 int ongoingClients(ClientsArray *clients);
 int addClient(int clientfd, ClientsArray *clients);
+int delClient(Clients *client, ClientsArray *clients);
 
 #endif
