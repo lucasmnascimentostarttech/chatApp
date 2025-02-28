@@ -12,7 +12,7 @@ int main(int argc, char *argv[]){
         switch(opt){
             case 's':
                 return(runServer());
-                break;
+                return 0;
             case 'i':
                 printf("%s\n", optarg);
                 IP = optarg;
