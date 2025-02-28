@@ -1,15 +1,20 @@
 #include "./inc/msg_control.h"
+#include "./inc/server.h"
 
-int getMessage(Clients *client){
+int getMessage(Clients *client, ClientsArray *clients){
     int recvBytes = 0, total_sent = 0;
     char msg[BUFFER_SIZE];
     memset(msg, 0, sizeof(msg));
-    recvBytes = recv(client->client_fd, msg, BUFFER_SIZE, MSG_DONTWAIT);
+    recvBytes = recv(client->client_fd, msg, BUFFER_SIZE, MSG_DONTWAIT);    
+    if(errno == ECONNRESET){
+        client->free = true;
+    }
     if(recvBytes < 0){
-        if(errno == EAGAIN || errno == EWOULDBLOCK){
+        if(errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNRESET){
             return 0;
         }
         else{
+            printf("%p", client);
             perror("recvError");
             return 1;
         }
@@ -23,26 +28,27 @@ int getMessage(Clients *client){
             }
             tries++;
         }
-        printf("%s\n", client->client_msg);
         return 1;
     }
 }
 int sendMessage(Clients *client, ClientsArray *clients){
     Clients *next;
     char msg[BUFFER_SIZE];
-    memset(msg, 0, strlen(msg));
-    sprintf(msg, "%s", client->client_msg);
+    memset(msg, 0, sizeof(msg));
+    snprintf(msg, BUFFER_SIZE, "%s", client->client_msg);
     size_t len = strlen(msg);
     for(next = clients->head; next != NULL; next = next->next){
         int sent = 0, total_sent = 0;
         if(next != client){
             while(total_sent < len){
+                printf("HELLO1\n");
                 sent = send(next->client_fd, msg + total_sent, len - total_sent, 0);
+                printf("HELLO10\n");
                 if(sent < 0){
-                    if(errno == EAGAIN || errno == EWOULDBLOCK){
+                    if(errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNRESET){
                         continue;
                     }
-                    perror("sendError");
+                    printf("HELLO2\n");
                     return 1;
                 }
                 else{
@@ -54,7 +60,9 @@ int sendMessage(Clients *client, ClientsArray *clients){
             }
         }
     }
-    memset(client->client_msg, 0, BUFFER_SIZE);
+    printf("HELL3\n");
+    memset(client->client_msg, 0, strlen(client->client_msg));
+    printf("HELL4\n");
     return 0;
 }
 
@@ -117,10 +125,7 @@ int sendMsg(Connection *conct){
 
     fgets(buffer, sizeof(buffer), stdin);
     bytes = strlen(buffer);
-    //printf("helloo\n");
     if(bytes > 0){
-        //printf("%s\n", buffer);
-        fflush(stdout);
         while(total_sent < bytes){
             sent = send(fd, buffer + total_sent, bytes - total_sent, MSG_DONTWAIT);
 
