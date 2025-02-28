@@ -5,7 +5,10 @@ int totalClients = 0;
 
 int runServer(){
     setvbuf(stdout, NULL, _IONBF, 0);
+    fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
     int fd;
+    char buf[10];
+    Clients *p;
 
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
@@ -28,6 +31,16 @@ int runServer(){
     while(true){
         if(incomingClients(&fd, clients) != 0){return 1;}
         if(ongoingClients(clients) != 0){return 1;}
+        fgets(buf, sizeof(buf), stdin);
+        if(strcmp(buf, "out\n") == 0){
+            if(totalClients > 0){
+                for(p = clients->head; p!=NULL; p=p->next){
+                    close(p->client_fd);
+                }
+            }
+            close(fd);
+            return 0;
+        }
     }
 }
 
@@ -120,7 +133,7 @@ int incomingClients(int *serverfd, ClientsArray *clients){
     socklen_t len = sizeof(addr);
     int fd = accept(*serverfd, (struct sockaddr *)&addr, &len);
     if(fd < 0){
-        if(errno == EAGAIN || errno == EWOULDBLOCK){
+        if(errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNRESET){
             return 0;
         }
         else{
@@ -134,8 +147,19 @@ int incomingClients(int *serverfd, ClientsArray *clients){
 
 int ongoingClients(ClientsArray *clients){
     Clients *next;
+  //  usleep(200);
+  //  for(next = clients->head; next != NULL; next = next->next){
+   //     printf("Client: %p\n", next);
+   // }
     for(next = clients->head; next != NULL; next = next->next){
-        getMessage(next);
+        getMessage(next, clients);
+        if(next->free){
+            delClient(next, clients);
+            next->free = false;
+            close(next->client_fd);
+            free(next);
+            continue;
+        }
         if(strlen(next->client_msg) > 0){
             sendMessage(next, clients);
         }
@@ -151,7 +175,9 @@ int addClient(int clientfd, ClientsArray *clients){
     while(tries < 5){
         newClient = malloc(sizeof(Clients));
         if(newClient != NULL){
+            newClient->free = false;
             newClient->next = NULL;
+            newClient->previous = NULL;
             newClient->client_msg = malloc(BUFFER_SIZE);
             if(newClient->client_msg != NULL){
                 newClient->client_msg[0] = '\0';
@@ -175,10 +201,42 @@ int addClient(int clientfd, ClientsArray *clients){
     }
     else{
         newClient->next = clients->head;
+        clients->head->previous = newClient;
         clients->head = newClient;
         totalClients++;
     }
     printf("New Client connected.\n");
     sendWelcomeMessage(newClient);
+    return 0;
+}
+
+int delClient(Clients *client, ClientsArray *clients){
+    fflush(stdout);
+    Clients *p;
+    char buf[] = "Client disconnected";
+    printf("DISCONNECTING: %p\n", client);
+    if(client == clients->head){
+        if(client->next != NULL){
+            clients->head = client->next;
+            clients->head->previous = NULL;
+        }
+    }
+    else if(client == clients->tail){
+        if(client->previous != NULL){
+            clients->tail = client->previous;
+            clients->tail->next = NULL;
+        }
+    }
+    else{
+        client->previous->next = client->next;
+        client->next->previous = client->previous;
+    }
+
+    if(totalClients > 0){
+        client->client_msg = buf;
+        sendMessage(client, clients);
+    }
+    client->free = true;
+    totalClients --;
     return 0;
 }
